@@ -35,10 +35,3 @@ The `docker-compose.yml` file contains the configuration for the NATS cluster an
 
 ## Contributing
 Contributions to improve the NATS cluster setup are welcome. Please ensure to follow the contribution guidelines.
-
-## License
-[Your License Choice]
-
-## Contact
-[Your Contact Information]
-
