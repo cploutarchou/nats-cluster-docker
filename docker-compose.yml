@@ -1,33 +1,93 @@
-version: "3.5"
-services:
-  nats:
-    image: nats
-    ports:
-      - "8222:8222"
-    command: "--cluster_name NATS --cluster nats://0.0.0.0:6222 --http_port 8222"
-    networks: ["nats"]
-
-  nats-1:
-    image: nats
-    command: "--cluster_name NATS --cluster nats://0.0.0.0:6222 --routes=nats://ruser:T0pS3cr3t@nats:6222"
-    networks: ["nats"]
-    depends_on: ["nats"]
-
-  nats-2:
-    image: nats
-    command: "--cluster_name NATS --cluster nats://0.0.0.0:6222 --routes=nats://ruser:T0pS3cr3t@nats:6222"
-    networks: ["nats"]
-    depends_on: ["nats"]
-
-  nats-board:
-    image: natsboard/natsboard
-    ports:
-      - "127.0.0.1:3000:3000"
-    environment:
-      - NATS_URI=nats://nats:4222
-    networks: ["nats"]
-    depends_on: ["nats"]
+version: '3.7'
 
 networks:
+  monitor-net:
+    driver: bridge
+
+services:
   nats:
-    name: nats
+    image: nats:alpine
+    container_name: nats
+    restart: always
+    command: -c /etc/nats/nats.conf
+    ports:
+      - "4222:4222" # client port
+      - "6222:6222" # cluster port
+      - "8222:8222" # monitoring port
+    volumes:
+      - ./nats1.conf:/etc/nats/nats.conf
+    networks:
+      - monitor-net
+
+
+  exporter:
+    image: natsio/prometheus-nats-exporter
+    container_name: nats-exporter
+    restart: always
+    command: 
+      - -connz_detailed
+      - -jsz=all
+      - -routez
+      - -subz
+      - -varz
+      - -prefix=nats
+      - -use_internal_server_id
+      - http://nats:8222/
+    networks:
+      - monitor-net
+    labels:
+      org.label-schema.group: "nats-monitoring"
+    ports:
+      - "7777:7777" # client por     
+    depends_on:
+      - nats
+
+  surveyor:
+    image: natsio/nats-surveyor
+    container_name: nats-surveyor
+    restart: always
+    volumes:
+      - ./observations:/observations
+      - $JETSTREAM_STORAGE:/data
+    command: |
+      -s admin:admin@nats:4222 --accounts --observe /observations --jetstream /data
+    networks:
+      - monitor-net
+    labels:
+      org.label-schema.group: "nats-monitoring"
+
+
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    user: "root"
+    restart: always
+    volumes:
+      - ./prometheus/:/etc/prometheus/
+      - $PROMETHEUS_STORAGE:/usr/local/share/prometheus
+    command: --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/usr/local/share/prometheus
+    networks:
+      - monitor-net
+    labels:
+      org.label-schema.group: "nats-monitoring"
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      - surveyor
+      - exporter
+
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    restart: always
+    ports:
+      - "127.0.0.1:8055:3000"
+    volumes:
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - monitor-net
+    labels:
+      org.label-schema.group: "nats-monitoring"
+    depends_on:
+      - prometheus
